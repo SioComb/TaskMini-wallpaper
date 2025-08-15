@@ -1,0 +1,418 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Task Mini — Quad + CodeTime</title>
+<style>
+  :root{
+    --bg:#0b1220; --card:#0f172a; --edge:#1f2937; --fg:#e5e7eb; --muted:#94a3b8; --accent:#60a5fa;
+    --radius:18px; --gap:18px;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:ui-sans-serif,system-ui,"Segoe UI",Roboto,"Hiragino Kaku Gothic ProN",Meiryo,sans-serif}
+  .wrap{height:100%;display:grid;place-items:center;padding:24px}
+  .grid{
+    width:min(1600px,100%);
+    height:min(900px, 90vh);
+    display:grid; gap:var(--gap);
+    grid-template-columns: 1fr minmax(420px, 520px) 1fr;
+    grid-template-rows: 1fr auto 1fr;
+    grid-template-areas:
+      "cpu   center   ram"
+      ".     center   ."
+      "gpu   center   net";
+  }
+  .tile{background:linear-gradient(180deg,var(--card),#0a1020);border:1px solid var(--edge);border-radius:var(--radius);padding:14px 16px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+  .panel{display:grid;grid-template-rows:auto 1fr;gap:10px;min-height:220px}
+  .info{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center}
+  .label{font-weight:700;letter-spacing:.02em}
+  .badge{font-size:.8rem;border:1px solid var(--edge);background:#0b1220;color:#94a3b8;padding:4px 10px;border-radius:999px;white-space:nowrap}
+  .value{font-size:2.6rem;font-weight:800}
+  .sub{color:#94a3b8;font-size:.95rem;margin-top:2px}
+  .graph{border:1px solid var(--edge);border-radius:12px;position:relative;overflow:hidden;background:#0b1220;min-height:110px}
+  canvas{width:100%;height:100%;display:block}
+  footer{position:fixed;right:14px;bottom:10px;color:#64748b;font-size:.85rem}
+
+
+  .ct-cal{border:1px solid var(--edge);border-radius:var(--radius);padding:10px 12px;background:linear-gradient(180deg,#0f172a,#0b1220)}
+  .ct-cal .cal-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;color:var(--fg);font-weight:700}
+  .ct-cal .cal-head .month{opacity:.9}
+  .ct-cal .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+  .ct-cal .dow{color:#94a3b8;font-size:.85rem;text-align:center}
+  .ct-cal .day{height:24px;display:grid;place-items:center;border:1px solid #1f2937;border-radius:8px;color:#cbd5e1;font-size:.9rem}
+  .ct-cal .day.dim{opacity:.45}
+  .ct-cal .day.today{border-color:#60a5fa;box-shadow:0 0 0 2px rgba(96,165,250,.25) inset;color:#e5e7eb;font-weight:700}
+
+  .ct-cal .day.hol{color:#fca5a5;border-color:#f87171;background:rgba(248,113,113,.08);}
+  .ct-cal .day.hol.today{box-shadow:0 0 0 2px rgba(248,113,113,.35) inset, 0 0 0 2px rgba(96,165,250,.25) inset}
+  .ct-cal .legend{display:flex;gap:10px;justify-content:flex-end;color:#94a3b8;font-size:.8rem;margin-top:6px}
+  .ct-cal .legend .chip{display:inline-flex;align-items:center;gap:6px}
+  .ct-cal .legend .swatch{width:10px;height:10px;border-radius:2px;background:#f87171}
+
+
+
+  #cpuTile{grid-area:cpu}
+  #ramTile{grid-area:ram}
+  #gpuTile{grid-area:gpu}
+  #netTile{grid-area:net}
+  #centerTile{grid-area:center; display:grid; place-items:center; padding:0}
+
+  /* CodeTime center */
+  .codetime{width:100%;height:100%;display:grid;grid-template-rows:auto 1fr auto;gap:10px}
+  .ct-surface{flex:1;display:grid;place-items:center;background:linear-gradient(135deg,#1e293b,#0f172a,#0b1220);border-radius:var(--radius) var(--radius) 0 0;border:1px solid var(--edge);border-bottom:none}
+  .ct-inner{display:flex;gap:32px;align-items:center;justify-content:center;flex-wrap:wrap;padding:24px}
+  .ct-code{font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; line-height:1.5}
+  .ct-code .kw{color:#60a5fa}
+  .ct-code .num{color:#dcdcaa}
+  .ct-code .str{color:#ce9178}
+  .ct-analog{width:160px;height:160px;border:3px solid rgba(206,145,120,.9);border-radius:50%;position:relative;box-shadow:0 0 18px rgba(206,145,120,.35)}
+  .ct-analog .hand{position:absolute;background:#e5e7eb;transform-origin:bottom center}
+  .ct-analog .h{width:6px;height:56px;top:28px;left:77px}
+  .ct-analog .m{width:4px;height:74px;top:10px;left:78px}
+  .ct-analog .s{width:2px;height:82px;top:2px;left:79px;background:#ce9178}
+  .ct-analog .dot{position:absolute;width:10px;height:10px;border-radius:50%;background:#fff;top:50%;left:50%;transform:translate(-50%,-50%)}
+  .ct-footer{border:1px solid var(--edge);border-top:none;border-radius:0 0 var(--radius) var(--radius);padding:10px 16px;color:#94a3b8;font-size:.9rem;text-align:center}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="grid">
+      <div class="tile panel" id="cpuTile">
+        <div class="info"><div class="label">CPU</div><div class="badge" id="cpuName">-</div><div class="value" id="cpuVal">--%</div></div>
+        <div><div class="sub" id="cpuSub">Cores: -- / Threads: --</div><div class="graph"><canvas id="cpuGraph"></canvas></div></div>
+      </div>
+      <div class="tile panel" id="ramTile">
+        <div class="info"><div class="label">RAM</div><div class="badge" id="ramTotal">-</div><div class="value" id="ramVal">--%</div></div>
+        <div><div class="sub" id="ramSub">Used: -- / Free: --</div><div class="graph"><canvas id="ramGraph"></canvas></div></div>
+      </div>
+      <div class="tile panel" id="gpuTile">
+        <div class="info"><div class="label">GPU</div><div class="badge" id="gpuName">-</div><div class="value" id="gpuVal">--%</div></div>
+        <div><div class="sub" id="gpuSub">VRAM Used: --</div><div class="graph"><canvas id="gpuGraph"></canvas></div></div>
+      </div>
+      <div class="tile panel" id="netTile">
+        <div class="info"><div class="label">Wi‑Fi</div><div class="badge" id="netName">-</div><div class="value" id="netVal">-- Mb/s</div></div>
+        <div><div class="sub" id="netSub">↑ -- Mb/s</div><div class="graph"><canvas id="netGraph"></canvas></div></div>
+      </div>
+      <div class="tile" id="centerTile">
+        <div class="codetime">
+          <div class="ct-cal" id="ctCal"></div>
+          <div class="ct-surface">
+            <div class="ct-inner">
+              <pre id="ctCode" class="ct-code"></pre>
+              <div class="ct-analog">
+                <div class="hand h" id="ctH"></div>
+                <div class="hand m" id="ctM"></div>
+                <div class="hand s" id="ctS"></div>
+                <div class="dot"></div>
+              </div>
+            </div>
+          </div>
+          <div class="ct-footer" id="ctFooter">CodeTime</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <footer id="mode">Mode: auto-detect</footer>
+
+<script>
+  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+  const pct=(v)=>clamp(v,0,100).toFixed(0);
+  const fmtMB=(mb)=> (mb/1024).toFixed(1)+" GB";
+  const fmtMb=(bps)=> ((bps*8)/(1024*1024)).toFixed(2);
+
+  function Sparky(canvas,{autoscale=false}={}){
+    const ctx=canvas.getContext('2d'); const hist=[]; const N=120;
+    let W=0,H=0,dpr=window.devicePixelRatio||1;
+    function setSize(){
+      const r=canvas.getBoundingClientRect();
+      W=Math.max(1,Math.floor(r.width)); H=Math.max(1,Math.floor(r.height));
+      canvas.style.width=W+'px'; canvas.style.height=H+'px';
+      canvas.width=Math.floor(W*dpr); canvas.height=Math.floor(H*dpr);
+      ctx.setTransform(dpr,0,0,dpr,0,0);
+    }
+    function grid(){
+      ctx.clearRect(0,0,W,H);
+      ctx.lineWidth=1; ctx.strokeStyle="rgba(148,163,184,.15)";
+      const rows=4, cols=8;
+      for(let i=1;i<rows;i++){ const y=Math.round(H*i/rows); ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke();}
+      for(let j=1;j<cols;j++){ const x=Math.round(W*j/cols); ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke();}
+    }
+    function draw(){
+      grid();
+      const maxY = autoscale ? Math.max(10, ...hist) : 100;
+      ctx.beginPath(); ctx.lineWidth=2; ctx.strokeStyle="rgba(96,165,250,1)";
+      const L=hist.length;
+      for(let i=0;i<L;i++){
+        const x=(i/(N-1))*W;
+        const y=H-(clamp(hist[i],0,maxY)/maxY)*H;
+        if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+      }
+      ctx.stroke();
+      const grad=ctx.createLinearGradient(0,0,0,H);
+      grad.addColorStop(0,"rgba(96,165,250,.18)");
+      grad.addColorStop(1,"rgba(96,165,250,0)");
+      ctx.lineTo(W,H); ctx.lineTo(0,H); ctx.closePath();
+      ctx.fillStyle=grad; ctx.fill();
+    }
+    function push(v){ hist.push(v); if(hist.length>N) hist.shift(); draw(); }
+    const ro=new ResizeObserver(()=>{ setSize(); draw(); }); ro.observe(canvas);
+    setSize(); draw();
+    return {push};
+  }
+
+  const cpuSpark=Sparky(document.getElementById('cpuGraph'));
+  const ramSpark=Sparky(document.getElementById('ramGraph'));
+  const gpuSpark=Sparky(document.getElementById('gpuGraph'));
+  const netSpark=Sparky(document.getElementById('netGraph'),{autoscale:true});
+
+  function updateUI(d){
+    if(!d) return;
+    document.getElementById('cpuName').textContent = d.NameCpu || d.cpu?.name || '-';
+    const cpu = d.CurrentCpu ?? d.cpu?.usage ?? 0;
+    const cores = d.Cores ?? d.cpu?.cores ?? null;
+    const threads = d.Threads ?? d.cpu?.threads ?? (typeof navigator!=='undefined'?navigator.hardwareConcurrency:null);
+    document.getElementById('cpuVal').textContent = pct(cpu) + "%";
+    document.getElementById('cpuSub').textContent = `Cores: ${cores ?? "--"} / Threads: ${threads ?? "--"}`;
+    cpuSpark.push(Number(cpu)||0);
+
+    const totalMB = d.TotalRam ?? d.ram?.totalMB ?? 0;
+    const freeMB  = d.CurrentRamAvail ?? d.ram?.freeMB ?? 0;
+    const usedMB  = Math.max(0,totalMB - freeMB);
+    const ramPct  = totalMB ? (usedMB/totalMB)*100 : (d.ram?.usagePct ?? 0);
+    document.getElementById('ramTotal').textContent = totalMB? `Total ${fmtMB(totalMB)}` : '-';
+    document.getElementById('ramVal').textContent = pct(ramPct) + "%";
+    document.getElementById('ramSub').textContent = `Used: ${fmtMB(usedMB)} / Free: ${fmtMB(freeMB)}`;
+    ramSpark.push(Number(ramPct)||0);
+
+    document.getElementById('gpuName').textContent = d.NameGpu || d.gpu?.name || '-';
+    const gpu = d.CurrentGpu3D ?? d.gpu?.usage ?? 0;
+    document.getElementById('gpuVal').textContent = pct(gpu) + "%";
+    document.getElementById('gpuSub').textContent = d.gpu?.vramUsedMB && d.gpu?.vramTotalMB
+      ? `VRAM Used: ${fmtMB(d.gpu.vramUsedMB)} / ${fmtMB(d.gpu.vramTotalMB)}` : 'VRAM Used: --';
+    gpuSpark.push(Number(gpu)||0);
+
+    document.getElementById('netName').textContent = d.NameNetCard || d.net?.name || '-';
+    const down = d.CurrentNetDown ?? d.net?.downBps ?? 0;
+    const up   = d.CurrentNetUp   ?? d.net?.upBps   ?? 0;
+    document.getElementById('netVal').textContent = fmtMb(down) + " Mb/s";
+    document.getElementById('netSub').textContent = "↑ " + fmtMb(up) + " Mb/s";
+    netSpark.push((down*8)/(1024*1024));
+  }
+
+  function updateCodeTime(){
+    const now = new Date();
+    const y = now.getFullYear();
+    const mo = String(now.getMonth()+1).padStart(2,'0');
+    const d = String(now.getDate()).padStart(2,'0');
+    const wd = now.toLocaleString('en', { weekday:'long' });
+    const hh = String(now.getHours()).padStart(2,'0');
+    const mm = String(now.getMinutes()).padStart(2,'0');
+    const ss = String(now.getSeconds()).padStart(2,'0');
+    const start = new Date(now); start.setHours(0,0,0,0);
+    const progress = ((now - start)/86400000)*100;
+
+    const numberColor = '#dcdcaa';
+    
+    const code = `
+<span class="kw">current_time</span> = { 
+  <span class="kw">year</span>: <span class="num" style="color:${numberColor}">${y}</span>,
+  <span class="kw">month</span>: <span class="num" style="color:${numberColor}">${mo}</span>,
+  <span class="kw">day</span>: <span class="num" style="color:${numberColor}">${d}</span>,
+  <span class="kw">weekday</span>: <span class="str">'${wd}'</span>,
+  <span class="kw">hour</span>: <span class="num" style="color:${numberColor}">${hh}</span>,
+  <span class="kw">minute</span>: <span class="num" style="color:${numberColor}">${mm}</span>,
+  <span class="kw">second</span>: <span class="num" style="color:${numberColor}">${ss}</span>,
+  <span class="kw">day_progress</span>: <span class="num" style="color:${numberColor}">${progress.toFixed(2)}%</span>
+}`;
+    document.getElementById('ctCode').innerHTML = code;
+
+
+    const hdeg = (now.getHours()%12)*30 + now.getMinutes()*0.5;
+    const mdeg = now.getMinutes()*6 + now.getSeconds()*0.1;
+    const sdeg = now.getSeconds()*6;
+    document.getElementById('ctH').style.transform = `rotate(${hdeg}deg)`;
+    document.getElementById('ctM').style.transform = `rotate(${mdeg}deg)`;
+    document.getElementById('ctS').style.transform = `rotate(${sdeg}deg)`;
+    document.getElementById('ctFooter').textContent = `${y}-${mo}-${d} ${wd}`;
+  }
+  setInterval(updateCodeTime, 1000); updateCodeTime();
+
+  window.livelySystemInformation = function(data){
+    try{
+      document.getElementById('mode').textContent = "Mode: Lively API";
+      const d = (typeof data === 'string') ? JSON.parse(data) : data;
+      updateUI(d);
+    }catch(e){}
+  }
+  async function pollBridge(){
+    try{
+      const r = await fetch('http://127.0.0.1:18080/metrics', {cache:'no-store'});
+      if(r.ok){
+        document.getElementById('mode').textContent = "Mode: Local Bridge";
+        updateUI(await r.json());
+      }
+    }catch(_){}
+    setTimeout(pollBridge, 1000);
+  }
+  pollBridge();
+
+
+  // ---------- Japanese Holidays (built-in) ----------
+  function nthWeekdayOfMonth(year, month, weekday, n){ // weekday: 0=Sun..6=Sat, month: 1-12
+    const first = new Date(year, month-1, 1);
+    const offset = (weekday - first.getDay() + 7) % 7;
+    const day = 1 + offset + 7*(n-1);
+    return new Date(year, month-1, day);
+  }
+  // Equinox (approximation valid for ~1900-2100)
+  function vernalEquinoxDay(year){
+    return Math.floor(20.8431 + 0.242194*(year-1980)) - Math.floor((year-1980)/4);
+  }
+  function autumnalEquinoxDay(year){
+    return Math.floor(23.2488 + 0.242194*(year-1980)) - Math.floor((year-1980)/4);
+  }
+  function yyyy_mm_dd(date){
+    const y=date.getFullYear();
+    const m=String(date.getMonth()+1).padStart(2,'0');
+    const d=String(date.getDate()).padStart(2,'0');
+    return `${y}-${m}-${d}`;
+  }
+  function jpHolidays(year){
+    const map = new Map();
+    const add=(m,d,name)=>{ map.set(`${year}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`, name); };
+    // Fixed / variable rules (current law)
+    add(1,1,'元日');
+    add(2,11,'建国記念の日');
+    add(2,23,'天皇誕生日');
+    add(4,29,'昭和の日');
+    add(5,3,'憲法記念日');
+    add(5,4,'みどりの日');
+    add(5,5,'こどもの日');
+    add(8,11,'山の日');
+    add(11,3,'文化の日');
+    add(11,23,'勤労感謝の日');
+    // Happy Monday
+    addDate(nthWeekdayOfMonth(year,1,1,2), '成人の日');       // Jan 2nd Monday (Mon=1)
+    addDate(nthWeekdayOfMonth(year,7,1,3), '海の日');        // Jul 3rd Monday
+    addDate(nthWeekdayOfMonth(year,9,1,3), '敬老の日');      // Sep 3rd Monday
+    addDate(nthWeekdayOfMonth(year,10,1,2), 'スポーツの日'); // Oct 2nd Monday
+    // Equinox
+    add(3, vernalEquinoxDay(year), '春分の日');
+    add(9, autumnalEquinoxDay(year), '秋分の日');
+
+    // Substitute holidays (振替休日): if holiday falls on Sunday, next non-holiday weekday
+    const dates = Array.from(map.keys()).sort();
+    const isHoliday=(ds)=>map.has(ds);
+    function addDate(dt, name){
+      add(dt.getMonth()+1, dt.getDate(), name);
+    }
+    // recompute after adding variable ones
+    const all = Array.from(map.keys()).sort();
+    for(const ds of all){
+      const d = new Date(ds);
+      if (d.getDay()===0){ // Sunday
+        // find next weekday not already a holiday
+        let i=1;
+        while(true){
+          const n = new Date(d); n.setDate(d.getDate()+i);
+          const ns = yyyy_mm_dd(n);
+          if (!isHoliday(ns) && n.getDay()!==0){
+            map.set(ns, (map.get(ds)||'') + ' 振替休日');
+            break;
+          }
+          i++;
+        }
+      }
+    }
+    // Citizens' Holiday (国民の休日): a weekday sandwiched between two holidays
+    // Iterate dates within the year
+    for(let m=1;m<=12;m++){
+      const last = new Date(year, m, 0).getDate();
+      for(let d=1; d<=last; d++){
+        const day = new Date(year, m-1, d);
+        const ds = yyyy_mm_dd(day);
+        if (map.has(ds)) continue;
+        if (day.getDay()===0 || day.getDay()===6) continue; // only weekday
+        const prev = new Date(year, m-1, d-1);
+        const next = new Date(year, m-1, d+1);
+        if (map.has(yyyy_mm_dd(prev)) && map.has(yyyy_mm_dd(next))){
+          map.set(ds, '国民の休日');
+        }
+      }
+    }
+    return map;
+  }
+
+  // ---------- Calendar above CodeTime ----------
+  function buildCalendar(date){
+    const hol = jpHolidays(date.getFullYear());
+    const cal = document.getElementById('ctCal');
+    if(!cal) return;
+    cal.innerHTML = '';
+    const year = date.getFullYear();
+    const month = date.getMonth(); // 0-index
+    const first = new Date(year, month, 1);
+    const last = new Date(year, month+1, 0);
+    const startDow = first.getDay(); // Sunday=0
+    const totalDays = last.getDate();
+
+    // header
+    const head = document.createElement('div');
+    head.className = 'cal-head';
+    const monthName = new Intl.DateTimeFormat('ja-JP', { year:'numeric', month:'long'}).format(first);
+    head.innerHTML = `<span class="month">${monthName}</span><span class="hint">Sun start</span>`;
+    cal.appendChild(head);
+
+    const grid = document.createElement('div');
+    grid.className = 'cal-grid';
+    cal.appendChild(grid);
+    const legend=document.createElement('div'); legend.className='legend'; legend.innerHTML='<span class="chip"><span class="swatch"></span>祝日</span>'; cal.appendChild(legend);
+
+    const dows = ['日','月','火','水','木','金','土'];
+    dows.forEach(d=>{
+      const el = document.createElement('div');
+      el.className = 'dow'; el.textContent = d;
+      grid.appendChild(el);
+    });
+
+    // days
+    const today = new Date();
+    const daysCells = [];
+    const totalCells = 7 + startDow + totalDays; // include headers
+    for(let i=0;i<startDow;i++){
+      const el = document.createElement('div');
+      el.className = 'day dim'; el.textContent = '';
+      grid.appendChild(el);
+    }
+    for(let d=1; d<=totalDays; d++){
+      const el = document.createElement('div');
+      el.className = 'day'; el.textContent = d;
+      const key = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      if (hol.has(key)) { el.classList.add('hol'); el.title = hol.get(key); }
+      if (year===today.getFullYear() && month===today.getMonth() && d===today.getDate()){
+        el.classList.add('today');
+      }
+      grid.appendChild(el);
+    }
+    // pad to complete weeks
+    const cellsNow = grid.children.length;
+    const remainder = (Math.ceil(cellsNow/7)*7) - cellsNow;
+    for(let i=0;i<remainder;i++){
+      const el = document.createElement('div');
+      el.className = 'day dim'; el.textContent = '';
+      grid.appendChild(el);
+    }
+  }
+  function scheduleCalendarRefresh(){
+    const now = new Date();
+    const next = new Date(now); next.setHours(24,0,5,0); // 5s after midnight
+    setTimeout(()=>{ buildCalendar(new Date()); scheduleCalendarRefresh(); }, next-now);
+  }
+  buildCalendar(new Date());
+  scheduleCalendarRefresh();
+
+</script>
+</body>
+</html>

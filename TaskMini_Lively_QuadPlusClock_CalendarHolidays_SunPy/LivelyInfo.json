@@ -1,0 +1,9 @@
+{
+  "AppVersion": "2.0",
+  "Title": "Task Mini — Quad + CodeTime",
+  "Author": "ChatGPT + You",
+  "Type": "web",
+  "FileName": "index.html",
+  "Arguments": "--system-information",
+  "Desc": "CPU/RAM/GPU/Network in a 2x2 grid with a center CodeTime clock."
+}
