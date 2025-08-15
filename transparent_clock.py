@@ -36,6 +36,38 @@ def get_workerw():
     return result[0] if result else None
 
 
+# ───────────── クリック透過 切替ヘルパ ─────────────
+def _set_click_through(hwnd: int, enable: bool):
+    GWL_EXSTYLE = -20
+    WS_EX_TRANSPARENT = 0x00000020
+    WS_EX_LAYERED     = 0x00080000
+
+    ex = win32gui.GetWindowLong(hwnd, GWL_EXSTYLE)
+
+    # 親がある (= WorkerW の子) 場合は WS_EX_LAYERED を使わない
+    has_parent = bool(win32gui.GetParent(hwnd))
+
+    if enable:
+        new_ex = ex | WS_EX_TRANSPARENT
+        if not has_parent:
+            # トップレベルのときだけ layered を付与（必須ではないが将来用に残す）
+            new_ex |= WS_EX_LAYERED
+        if new_ex != ex:
+            win32gui.SetWindowLong(hwnd, GWL_EXSTYLE, new_ex)
+        # 子の場合は SetLayeredWindowAttributes を呼ばない（エラーの原因）
+        if not has_parent and (new_ex & WS_EX_LAYERED):
+            try:
+                win32gui.SetLayeredWindowAttributes(hwnd, 0, 255, win32con.LWA_ALPHA)
+            except win32gui.error:
+                pass
+    else:
+        # クリック透過だけ外す（layered は変更しない）
+        new_ex = ex & ~WS_EX_TRANSPARENT
+        if new_ex != ex:
+            win32gui.SetWindowLong(hwnd, GWL_EXSTYLE, new_ex)
+
+
+
 # ───────────── 軽量スパークライン ─────────────
 class SparkGraph(QWidget):
     def __init__(self, max_points=300, y_max=100.0, y_label="%", grid=True, parent=None):
@@ -124,12 +156,12 @@ class CustomCalendar(QCalendarWidget):
                   Qt.DayOfWeek.Thursday, Qt.DayOfWeek.Friday):
             self.setWeekdayTextFormat(d, default_fmt)
 
-        sat = QTextCharFormat(); sat.setForeground(QColor("#00B7FF"))  # 土
-        sun = QTextCharFormat(); sun.setForeground(QColor("#FF40FF"))  # 日
+        sat = QTextCharFormat(); sat.setForeground(QColor("#00B7FF"))  # 土（濃く）
+        sun = QTextCharFormat(); sun.setForeground(QColor("#FF40FF"))  # 日（濃く）
         self.setWeekdayTextFormat(Qt.DayOfWeek.Saturday, sat)
         self.setWeekdayTextFormat(Qt.DayOfWeek.Sunday,   sun)
 
-        hol = QTextCharFormat(); hol.setForeground(QColor("#4DE36B"))  # 祝
+        hol = QTextCharFormat(); hol.setForeground(QColor("#4DE36B"))  # 祝（濃く）
         today = datetime.date.today()
         y, m = today.year, today.month
         first = datetime.date(y, m, 1)
@@ -181,32 +213,28 @@ class GPUMonitor:
         self.engine_counters = []
         self.mem_counters_usage = []
         self.mem_counters_limit = []
-
         try:
-            # GPU Engine
-            instances, _ = win32pdh.EnumObjectItems(None, None, "GPU Engine", win32pdh.PERF_DETAIL_WIZARD)
-            for inst in instances:
-                # (machine, object, instance, parentInstance, index, counter)
+            # EnumObjectItems は (counters, instances) の順
+            _counters, instances = win32pdh.EnumObjectItems(None, None, "GPU Engine", win32pdh.PERF_DETAIL_WIZARD)
+            for inst in instances or []:
+                # MakeCounterPath: (machine, object, instance, parentInstance, index, counter)
                 path = win32pdh.MakeCounterPath((None, "GPU Engine", inst, None, 0, "Utilization Percentage"))
-                c = win32pdh.AddCounter(self.query, path)
-                self.engine_counters.append(c)
+                self.engine_counters.append(win32pdh.AddCounter(self.query, path))
 
-            # GPU Adapter Memory
-            mem_instances, _ = win32pdh.EnumObjectItems(None, None, "GPU Adapter Memory", win32pdh.PERF_DETAIL_WIZARD)
-            for inst in mem_instances:
-                # Dedicated Usage
+            _counters_m, mem_instances = win32pdh.EnumObjectItems(None, None, "GPU Adapter Memory", win32pdh.PERF_DETAIL_WIZARD)
+            for inst in mem_instances or []:
                 path_u = win32pdh.MakeCounterPath((None, "GPU Adapter Memory", inst, None, 0, "Dedicated Usage"))
                 self.mem_counters_usage.append(win32pdh.AddCounter(self.query, path_u))
-                # Dedicated Limit（存在しない環境もあるので try/except）
+                # Limit が無い環境もある
                 try:
                     path_l = win32pdh.MakeCounterPath((None, "GPU Adapter Memory", inst, None, 0, "Dedicated Limit"))
                     self.mem_counters_limit.append(win32pdh.AddCounter(self.query, path_l))
                 except win32pdh.error:
                     pass
 
-
-            # 初回収集
+            # 初回サンプル収集
             win32pdh.CollectQueryData(self.query)
+
         except win32pdh.error:
             # 使えない環境では空のまま
             pass
@@ -237,7 +265,9 @@ class Dashboard(QWidget):
         super().__init__()
         # 透明・枠なし
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+
+        # 自前フラグ（壁紙配下だと isFullScreen() 判定が怪しいため）
+        self._is_fullscreen = True
 
         # クリック透過（背面のボタンを押せる） … F10 で切替
         self.click_through = True
@@ -257,7 +287,7 @@ class Dashboard(QWidget):
         self.cpu_panel = Panel("CPU", subtitle=self._cpu_name()); self.cpu_panel.set_graph(self.cpu_graph)
         self.ram_panel = Panel("RAM", subtitle=self._ram_total()); self.ram_panel.set_graph(self.ram_graph)
         self.gpu_panel = Panel("GPU", subtitle=self._gpu_name()); self.gpu_panel.set_graph(self.gpu_graph)
-        self.net_panel = Panel("Wi‑Fi", subtitle=self._net_iface()); self.net_panel.set_graph(self.net_graph)
+        self.net_panel = Panel("Wi-Fi", subtitle=self._net_iface()); self.net_panel.set_graph(self.net_graph)
 
         # 中央：上=カレンダー、下=時計（アナログ＋テキスト）
         cal_wrap = Panel("Calendar", show_border=False)
@@ -296,17 +326,31 @@ class Dashboard(QWidget):
     # 画面操作
     def to_fullscreen(self):
         screen = QApplication.primaryScreen().geometry()
-        self.setGeometry(0,0,screen.width(),screen.height()); self.show()
+        self.setGeometry(0,0,screen.width(),screen.height())
+        self.showFullScreen()
+        self._is_fullscreen = True
+
+    def toggle_fullscreen(self):
+        if self._is_fullscreen:
+            self.showNormal()
+            self.resize(1460, 820)
+            self.move(120, 120)
+            self._is_fullscreen = False
+        else:
+            self.to_fullscreen()
 
     def keyPressEvent(self, e):
         if e.key()==Qt.Key.Key_Escape:
             QApplication.quit()
         elif e.key()==Qt.Key.Key_F11:
-            if self.isFullScreen(): self.showNormal(); self.resize(1460,820); self.move(120,120)
-            else: self.to_fullscreen()
+            self.toggle_fullscreen()
         elif e.key()==Qt.Key.Key_F10:
             self.click_through = not self.click_through
             self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, self.click_through)
+            try:
+                _set_click_through(int(self.winId()), self.click_through)
+            except Exception:
+                pass
 
     def _place_calendar(self, panel: Panel):
         r = panel.rect().adjusted(8,8,-8,-8)
@@ -330,17 +374,35 @@ class Dashboard(QWidget):
     def _ram_total(self):
         vm=psutil.virtual_memory(); return f"Total {vm.total/(1024**3):.1f} GB"
     def _gpu_name(self):  return "GPU"
-    def _net_iface(self): return "Realtek / Wi‑Fi"
+    def _net_iface(self): return "Realtek / Wi-Fi"
 
     # 壁紙の子に
     def attach_to_wallpaper(self):
-        hwnd = int(self.winId()); workerw = get_workerw()
+        hwnd = int(self.winId())
+        workerw = get_workerw()
+
+        # 重要：子ウィンドウにする前に layered 系を使う透過描画を無効化
+        if self.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground):
+            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+
         if workerw:
-            try: win32gui.SetParent(hwnd, workerw)
-            except win32gui.error: pass
-        win32gui.SetWindowPos(hwnd, win32con.HWND_BOTTOM, 0,0,0,0,
-                              win32con.SWP_NOMOVE | win32con.SWP_NOSIZE |
-                              win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW)
+            try:
+                win32gui.SetParent(hwnd, workerw)
+            except win32gui.error:
+                pass
+
+        win32gui.SetWindowPos(
+            hwnd, win32con.HWND_BOTTOM, 0, 0, 0, 0,
+            win32con.SWP_NOMOVE | win32con.SWP_NOSIZE |
+            win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW
+        )
+
+        # クリック透過（WS_EX_TRANSPARENT のみ）を適用
+        _set_click_through(hwnd, self.click_through)
+
+        # 再描画
+        self.update()
+
 
     # 1秒更新
     def update_all(self):
